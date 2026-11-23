@@ -187,8 +187,11 @@ Mac やスマートフォンから、NixOS マシン経由で計算サーバー�
 
 1. サービスのユーザーの `~/.ssh/config` に計算サーバーを書き、鍵でログインできるようにします。公式ドキュメントによると、Orca は `~/.ssh/config` の Host を SSH ターゲットとして取り込みます。
 2. NixOS マシンで `orca-server host list --json` を実行します。計算サーバーが `ssh:<target-id>` として出ることを確かめます。
-3. Mac で `orca host list --environment nixos --json` を実行します。同じ SSH ターゲットが見えるかを確かめます。
-4. スマートフォンの Orca Mobile で、NixOS のランタイムの下にそのワークスペースが出るかを確かめます。
+3. NixOS のランタイムで、計算サーバー上のリポジトリを開きます。Mac の Orca で NixOS のサーバーを選び、SSH ターゲット上のプロジェクトを追加できるかを確かめます。
+4. Mac で `orca worktree list --environment nixos --json` を実行します。計算サーバー上のワークスペースが出るかを確かめます。
+5. スマートフォンの Orca Mobile で、NixOS のランタイムの下にそのワークスペースが出るかを確かめます。
+
+`orca host list` は `--environment` で接続先を切り替えられません。SSH ターゲットの一覧は、NixOS マシン上で確認します。
 
 **構成 B: 環境を連鎖させる（Mac → NixOS → 計算サーバーのランタイム）。** NixOS のランタイムに、計算サーバーの Orca ランタイムをペアリングします。
 
@@ -205,7 +208,7 @@ Mac やスマートフォンから、NixOS マシン経由で計算サーバー�
    orca-server status --environment compute --json
    ```
 
-3. Mac で `orca host list --environment nixos --json` を実行します。`compute` が出るか、Mac からそのプロジェクトを開けるかを確かめます。
+3. Mac の Orca で NixOS のサーバーを選びます。`compute` のプロジェクトやワークスペースが見えるか、開けるかを確かめます。
 
 手順 3 で計算サーバーが見えなければ、連鎖は使えません。その場合、Mac とスマートフォンから計算サーバーへは、構成 A か、これまでどおりの直接のペアリングで届きます。
 

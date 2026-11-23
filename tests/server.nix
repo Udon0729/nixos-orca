@@ -151,6 +151,8 @@ in
         pair_client("wide", pairing_link(wide.succeed(as_alice(f"orca-server pair --address {wide_address}"))))
         pairing_link(wide.succeed(as_alice(f"orca-server pair --mobile --address {wide_address}")))
         assert_private_state(wide)
-        print(client.succeed(as_alice("orca-ide host list --environment wide --json")))
+        for listing in ["repo list", "worktree list"]:
+            assert json.loads(client.succeed(as_alice(f"orca-ide {listing} --environment wide --json")))["ok"]
+        client.fail(as_alice("orca-ide host list --environment wide --json"))
   '';
 }
