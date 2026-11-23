@@ -95,7 +95,7 @@ services.orca.enable = false;
 | `enable` | `false` | サービスを有効にします。 |
 | `user` | なし（必須） | ランタイムを動かす一般ユーザーです。 |
 | `interface` | `"tailscale0"` | ファイアウォールでポートを開ける唯一のインターフェースです。`bindAddress` がなければ、このインターフェースの IPv4 アドレスを待って使います。 |
-| `bindAddress` | `null` | 待ち受けとペアリングリンクに使う IP アドレスを直接指定します。 |
+| `bindAddress` | `null` | ペアリングリンクに使う IPv4 アドレスを直接指定します。`mobilePairing` が `false` なら、待ち受けにも使います。 |
 | `port` | `6768` | TCP ポートです。 |
 | `mobilePairing` | `false` | スマートフォンのペアリングと、`orca-server pair` によるペアリングを有効にします。 |
 | `openFirewall` | `true` | `interface` にだけポートを開けます。 |
@@ -120,7 +120,7 @@ sudo tailscale up
 tailscale ip -4
 ```
 
-`orca-server.service` は、`tailscale0` に IPv4 アドレスが付くまで待ってから起動します。確認には次を使います。
+`orca-server.service` は、`tailscale0` に IPv4 アドレスが付くまで待ってから起動します。`mobilePairing = true` のときは、ポートが空くまでも待ちます。別のプログラム（デスクトップアプリなど）が同じポートを使っている間は起動しません。`journalctl --user -u orca-server` に `waiting for port` と出ます。確認には次を使います。
 
 ```sh
 systemctl --user status orca-server
@@ -189,7 +189,7 @@ rm ~/.local/state/orca-server/serve-supervisor-brake.json
 systemctl --user start orca-server
 ```
 
-Orca のバージョンが変わったときも、この記録は無効になります。
+Orca を更新しても、この記録は消えません。
 
 ### 計算サーバーを使う
 

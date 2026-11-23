@@ -22,19 +22,30 @@ in
     };
   };
 
-  nodes.wide = {
-    imports = [ common ];
-    virtualisation.vlans = [
-      1
-      2
-    ];
-    services.orca-server = {
-      enable = true;
-      user = "alice";
-      interface = "eth1";
-      mobilePairing = true;
+  nodes.wide =
+    { pkgs, ... }:
+    {
+      imports = [ common ];
+      # Another program holds the port on loopback at boot, like a desktop app would.
+      systemd.services.squatter = {
+        wantedBy = [ "multi-user.target" ];
+        before = [ "user@1000.service" ];
+        serviceConfig = {
+          ExecStart = "${pkgs.python3}/bin/python3 -m http.server --bind 127.0.0.1 6768";
+          ExecStartPost = "${pkgs.bash}/bin/sh -c 'until ${pkgs.iproute2}/bin/ss -ltnH | ${pkgs.gnugrep}/bin/grep -qF 127.0.0.1:6768; do sleep 0.2; done'";
+        };
+      };
+      virtualisation.vlans = [
+        1
+        2
+      ];
+      services.orca-server = {
+        enable = true;
+        user = "alice";
+        interface = "eth1";
+        mobilePairing = true;
+      };
     };
-  };
 
   # The bind address does not exist at boot, like a Tailscale address before `tailscale up`.
   nodes.late = {
@@ -155,8 +166,11 @@ in
         late.succeed("ip address add 192.168.1.50/24 dev eth1")
         wait_for_listener(late, f"192.168.1.50:{PORT}")
 
-    with subtest("wide: listens on all interfaces, and the firewall opens eth1 only"):
+    with subtest("wide: waits for a busy port, then listens on all interfaces, and the firewall opens eth1 only"):
         wide.wait_for_unit("multi-user.target")
+        wide.wait_until_succeeds(as_alice("journalctl --user -u orca-server --no-pager") + f" | grep -qF 'waiting for port {PORT} to be free'")
+        assert f"0.0.0.0:{PORT}" not in wide.succeed("ss -ltnH")
+        wide.succeed("systemctl stop squatter")
         wait_for_listener(wide, f"0.0.0.0:{PORT}")
         listeners(wide)
         assert wide.succeed(f"iptables -S | grep -- '--dport {PORT}'").strip() == FIREWALL_RULE

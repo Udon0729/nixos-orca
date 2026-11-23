@@ -42,7 +42,12 @@ let
       ]).system.build.toplevel.drvPath
     ).success;
 
-  server = extra: { services.orca-server = { enable = true; } // extra; };
+  server = extra: {
+    services.orca-server = {
+      enable = true;
+    }
+    // extra;
+  };
 
   firewall = config: {
     inherit (config.networking.firewall) allowedTCPPorts allowedUDPPorts trustedInterfaces;
@@ -51,8 +56,7 @@ let
 in
 assert imported.system.build.toplevel.drvPath == untouched.system.build.toplevel.drvPath;
 assert
-  firewall enabled
-  == firewall untouched
+  firewall enabled == firewall untouched
   // {
     interfaces.tailscale0 = [
       22
@@ -61,11 +65,33 @@ assert
   };
 assert enabled.users.users.owner.linger == true && untouched.users.users.owner.linger != true;
 assert enabled.services.orca.enable == untouched.services.orca.enable;
-assert enabled.systemd.services.tailscaled.serviceConfig == untouched.systemd.services.tailscaled.serviceConfig;
-assert !refused (server { user = "owner"; });
-assert refused { imports = [ (server { user = "owner"; }) ]; networking.firewall.enable = false; };
-assert refused { imports = [ (server { user = "owner"; mobilePairing = true; }) ]; networking.firewall.enable = false; };
-assert refused (server { user = "root"; });
+assert
+  enabled.systemd.services.tailscaled.serviceConfig
+  == untouched.systemd.services.tailscaled.serviceConfig;
+assert
+  !refused (server {
+    user = "owner";
+  });
+assert refused {
+  imports = [ (server { user = "owner"; }) ];
+  networking.firewall.enable = false;
+};
+assert refused {
+  imports = [
+    (server {
+      user = "owner";
+      mobilePairing = true;
+    })
+  ];
+  networking.firewall.enable = false;
+};
+assert refused (server {
+  user = "root";
+});
+assert refused (server {
+  user = "owner";
+  bindAddress = "fd7a:115c:a1e0::1234";
+});
 pkgs.runCommand "existing-config-check" { } ''
   echo "importing the module without enabling it leaves the system derivation unchanged" > $out
 ''

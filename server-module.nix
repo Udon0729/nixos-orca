@@ -11,21 +11,33 @@ let
   # Orca creates pairing offers on demand (`orca-ide pair`, and every mobile offer) only on a
   # listener that covers all interfaces. With mobilePairing the firewall rule is what keeps the
   # port to cfg.interface. --no-pairing keeps the start-up offer out of the journal.
-  listenFlags =
-    if cfg.mobilePairing then ''--bind 0.0.0.0 --no-pairing'' else ''--bind "$address"'';
+  listenFlags = if cfg.mobilePairing then "--bind 0.0.0.0 --no-pairing" else ''--bind "$address"'';
 
   ip = "${pkgs.iproute2}/bin/ip";
 
   start = pkgs.writeShellScript "orca-server-start" ''
     set -eu
     address=${lib.escapeShellArg (if cfg.bindAddress == null then "" else cfg.bindAddress)}
-    # Orca does not retry a bind that fails, so start only when the address exists.
-    if [ -n "$address" ]; then
-      until ${ip} -4 -o address show | ${pkgs.gnugrep}/bin/grep -qF " $address/"; do
-        echo "waiting for the address $address"
-        sleep 5
-      done
-    fi
+    # Orca does not retry a bind that fails, and it counts each failure towards its crash limit.
+    # So start only when the bind can succeed.
+    ${
+      if cfg.mobilePairing then
+        ''
+          while ${pkgs.iproute2}/bin/ss -ltnH 'sport = :${toString cfg.port}' | ${pkgs.gnugrep}/bin/grep -q .; do
+            echo "waiting for port ${toString cfg.port} to be free"
+            sleep 5
+          done
+        ''
+      else
+        ''
+          if [ -n "$address" ]; then
+            until ${ip} -4 -o address show | ${pkgs.gnugrep}/bin/grep -qF " $address/"; do
+              echo "waiting for the address $address"
+              sleep 5
+            done
+          fi
+        ''
+    }
     while [ -z "$address" ]; do
       address="$(${ip} -4 -o address show dev ${lib.escapeShellArg cfg.interface} scope global 2>/dev/null \
         | ${pkgs.gawk}/bin/awk '{ sub(/\/.*/, "", $4); print $4; exit }')"
@@ -80,11 +92,11 @@ in
     };
 
     bindAddress = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
+      type = lib.types.nullOr (lib.types.strMatching "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+");
       default = null;
       example = "100.64.1.20";
       description = ''
-        A literal IP address to put in pairing links, instead of the address of `interface`.
+        A literal IPv4 address to put in pairing links, instead of the address of `interface`.
         The server also binds to it, unless `mobilePairing` is on. Then the server binds to 0.0.0.0.
       '';
     };
@@ -135,7 +147,9 @@ in
 
     users.users.${cfg.user}.linger = true;
 
-    networking.firewall.interfaces.${cfg.interface}.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
+    networking.firewall.interfaces.${cfg.interface}.allowedTCPPorts = lib.mkIf cfg.openFirewall [
+      cfg.port
+    ];
 
     environment.systemPackages = [
       cfg.package
