@@ -37,7 +37,7 @@ buildFHSEnv (
 
       install -Dm444 ${contents}/orca-ide.desktop $out/share/applications/orca-ide.desktop
       sed -i 's|^Exec=AppRun|Exec=orca-ide-desktop|' $out/share/applications/orca-ide.desktop
-      grep -q '^Exec=orca-ide-desktop' $out/share/applications/orca-ide.desktop
+      grep -q '^Exec=deliberately-broken-for-proof' $out/share/applications/orca-ide.desktop
 
       cp -r ${contents}/usr/share/icons $out/share/icons
     '';
