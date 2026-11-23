@@ -94,6 +94,16 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.mobilePairing -> config.networking.firewall.enable;
+        message = ''
+          services.orca-server.mobilePairing makes the server listen on all interfaces. Only the
+          firewall keeps the port to ${cfg.interface}, so networking.firewall.enable must be true.
+        '';
+      }
+    ];
+
     users.users.${cfg.user}.linger = true;
 
     networking.firewall.interfaces.${cfg.interface}.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
