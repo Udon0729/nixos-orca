@@ -21,6 +21,7 @@
         package = self.packages.${system}.default;
         vm = pkgs.testers.runNixOSTest (import ./tests/vm.nix { inherit self nixpkgs; });
         server = pkgs.testers.runNixOSTest (import ./tests/server.nix { inherit self; });
+        existing-config = import ./tests/existing-config.nix { inherit self nixpkgs pkgs; };
       };
     };
 }
