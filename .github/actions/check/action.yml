@@ -16,7 +16,7 @@ runs:
 
     - name: nix flake check
       shell: bash
-      run: nix flake check -L
+      run: nix flake check -L --keep-going
 
     - name: Evaluate examples/host with the stub hardware configuration
       shell: bash

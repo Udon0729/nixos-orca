@@ -22,6 +22,9 @@
         vm = pkgs.testers.runNixOSTest (import ./tests/vm.nix { inherit self nixpkgs; });
         server = pkgs.testers.runNixOSTest (import ./tests/server.nix { inherit self; });
         existing-config = import ./tests/existing-config.nix { inherit self nixpkgs pkgs; };
+        probe-crash-brake = pkgs.testers.runNixOSTest (import ./tests/probe/crash-brake.nix { inherit self; });
+        probe-bind-late = pkgs.testers.runNixOSTest (import ./tests/probe/bind-late.nix { inherit self; });
+        probe-stop-sync = pkgs.testers.runNixOSTest (import ./tests/probe/stop-sync.nix { inherit self; });
       };
     };
 }
