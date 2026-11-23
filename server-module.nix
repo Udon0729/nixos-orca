@@ -8,9 +8,11 @@ let
   cfg = config.services.orca-server;
   dataDir = "${config.users.users.${cfg.user}.home}/.local/state/orca-server";
 
-  # Mobile pairing offers are only served by a listener on all interfaces (upstream rule).
-  # The firewall rule below is then what keeps the port to cfg.interface.
-  listenAddress = if cfg.mobilePairing then "0.0.0.0" else "$address";
+  # Orca creates pairing offers on demand (`orca-ide pair`, and every mobile offer) only on a
+  # listener that covers all interfaces. A listener pinned to one address can only print one
+  # offer per start. With mobilePairing the firewall rule is what keeps the port to cfg.interface.
+  listenFlags =
+    if cfg.mobilePairing then ''--bind 0.0.0.0 --no-pairing'' else ''--bind "$address"'';
 
   start = pkgs.writeShellScript "orca-server-start" ''
     set -eu
@@ -24,8 +26,8 @@ let
       fi
     done
     mkdir -p ${lib.escapeShellArg dataDir}
-    exec ${lib.getExe cfg.package} serve --supervise --no-pairing --refuse-public \
-      --port ${toString cfg.port} --bind "${listenAddress}" --pairing-address "$address"
+    exec ${lib.getExe cfg.package} serve --supervise --refuse-public \
+      --port ${toString cfg.port} ${listenFlags} --pairing-address "$address"
   '';
 in
 {
@@ -74,9 +76,12 @@ in
       type = lib.types.bool;
       default = false;
       description = ''
-        Allow pairing the Orca mobile app. Orca serves mobile pairing only from a listener on all
-        interfaces, so this makes the server listen on 0.0.0.0. The firewall still opens the port
-        on `interface` alone.
+        Allow pairing the Orca mobile app, and pairing on demand with `orca-server pair`.
+        Orca serves both only from a listener on all interfaces, so this makes the server listen
+        on 0.0.0.0. The firewall still opens the port on `interface` alone.
+
+        When this is off, the server listens on one address. Each start then prints one desktop
+        pairing link to the journal of the user unit and retires the previous unused link.
       '';
     };
 
