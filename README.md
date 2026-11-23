@@ -177,6 +177,20 @@ systemctl --user restart orca-server
 
 Orca は、再起動してもターミナルが残ると起動ログに出します（`terminals survive an orcad restart: yes`）。エージェントが動いている状態での再起動は、このリポジトリのテストでは確かめていません。
 
+### クラッシュが続いたとき
+
+ランタイムが落ちると、Orca のスーパーバイザーが再起動します。ユニット全体が落ちると、systemd が再起動します。
+
+ただし、15 分以内に 6 回落ちると、Orca は再起動をやめます。これは Orca 自身の安全装置で、マシンを再起動しても解除されません。`journalctl --user -u orca-server` に `Not starting: Orca serve failed 6 times in 15 minutes` と出ます。原因を直してから、記録を消して起動し直します。
+
+```sh
+systemctl --user stop orca-server
+rm ~/.local/state/orca-server/serve-supervisor-brake.json
+systemctl --user start orca-server
+```
+
+Orca のバージョンが変わったときも、この記録は無効になります。
+
 ### 計算サーバーを使う
 
 計算サーバーで動いている既存の Orca ランタイムは、止めたり再起動したりしないでください。`orca environment stop`、`update`、`rollback` は、計算サーバーに対して実行しません。下の手順は、どちらも既存のランタイムに触れません。

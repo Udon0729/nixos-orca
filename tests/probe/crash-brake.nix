@@ -68,7 +68,7 @@
     with subtest("removing the crash record and restarting the unit brings it back"):
         pinned.succeed(as_alice("systemctl --user stop orca-server"))
         pinned.succeed("rm /home/alice/.local/state/orca-server/serve-supervisor-brake.json")
-        pinned.succeed(as_alice("systemctl --user reset-failed orca-server; systemctl --user start orca-server"))
+        pinned.succeed(as_alice("systemctl --user start orca-server"))
         wait_for_listener(pinned, local)
         show_state(pinned)
   '';
