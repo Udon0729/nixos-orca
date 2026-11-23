@@ -17,17 +17,24 @@ let
   # Orca keeps daemons and terminals alive after the launching process exits.
   dieWithParent = false;
 
+  # Programs that Orca starts by absolute path, so they must exist in /usr/bin of the sandbox.
+  extraPkgs = pkgs: [ ];
+
   desktop = appimageTools.wrapAppImage {
     pname = "orca-ide-desktop";
-    inherit version dieWithParent;
+    inherit version dieWithParent extraPkgs;
     src = contents;
+  };
+
+  cliEnv = appimageTools.defaultFhsEnvArgs // {
+    inherit version dieWithParent;
+    targetPkgs = pkgs: appimageTools.defaultFhsEnvArgs.targetPkgs pkgs ++ extraPkgs pkgs;
   };
 in
 buildFHSEnv (
-  appimageTools.defaultFhsEnvArgs
+  cliEnv
   // {
     pname = "orca-ide";
-    inherit version dieWithParent;
 
     # Upstream's CLI shim. The .deb links the same file to /usr/bin/orca-ide.
     runScript = "${contents}/resources/bin/orca-ide";
@@ -42,7 +49,17 @@ buildFHSEnv (
       cp -r ${contents}/usr/share/icons $out/share/icons
     '';
 
-    passthru = { inherit contents desktop; };
+    passthru = {
+      inherit contents desktop;
+      # A shell in the same sandbox as the CLI, for tests.
+      sandboxShell = buildFHSEnv (
+        cliEnv
+        // {
+          pname = "orca-ide-sandbox-shell";
+          runScript = "bash";
+        }
+      );
+    };
 
     meta = {
       description = "Orca, a desktop app that runs coding agents in parallel (stablyai/orca)";
