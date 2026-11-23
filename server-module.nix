@@ -63,7 +63,10 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       example = "100.64.1.20";
-      description = "A literal IP address to bind and to put in pairing links, instead of the address of `interface`.";
+      description = ''
+        A literal IP address to put in pairing links, instead of the address of `interface`.
+        The server also binds to it, unless `mobilePairing` is on. Then the server binds to 0.0.0.0.
+      '';
     };
 
     port = lib.mkOption {
@@ -96,11 +99,17 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = cfg.mobilePairing -> config.networking.firewall.enable;
+        # Linux accepts packets for any local address on any interface, so a listener bound to
+        # one address is still reachable from other networks unless the firewall drops them.
+        assertion = config.networking.firewall.enable;
         message = ''
-          services.orca-server.mobilePairing makes the server listen on all interfaces. Only the
-          firewall keeps the port to ${cfg.interface}, so networking.firewall.enable must be true.
+          services.orca-server relies on the firewall to keep its port to ${cfg.interface}.
+          networking.firewall.enable must be true.
         '';
+      }
+      {
+        assertion = config.users.users.${cfg.user}.isNormalUser;
+        message = "services.orca-server.user must be a normal user (isNormalUser), not root or a system user.";
       }
     ];
 

@@ -33,17 +33,16 @@ let
     }
   ];
 
-  withoutFirewall = evaluate [
-    self.nixosModules.default
-    {
-      networking.firewall.enable = false;
-      services.orca-server = {
-        enable = true;
-        user = "owner";
-        mobilePairing = true;
-      };
-    }
-  ];
+  refused =
+    settings:
+    !(builtins.tryEval
+      (evaluate [
+        self.nixosModules.default
+        settings
+      ]).system.build.toplevel.drvPath
+    ).success;
+
+  server = extra: { services.orca-server = { enable = true; } // extra; };
 
   firewall = config: {
     inherit (config.networking.firewall) allowedTCPPorts allowedUDPPorts trustedInterfaces;
@@ -63,7 +62,10 @@ assert
 assert enabled.users.users.owner.linger == true && untouched.users.users.owner.linger != true;
 assert enabled.services.orca.enable == untouched.services.orca.enable;
 assert enabled.systemd.services.tailscaled.serviceConfig == untouched.systemd.services.tailscaled.serviceConfig;
-assert !(builtins.tryEval withoutFirewall.system.build.toplevel.drvPath).success;
+assert !refused (server { user = "owner"; });
+assert refused { imports = [ (server { user = "owner"; }) ]; networking.firewall.enable = false; };
+assert refused { imports = [ (server { user = "owner"; mobilePairing = true; }) ]; networking.firewall.enable = false; };
+assert refused (server { user = "root"; });
 pkgs.runCommand "existing-config-check" { } ''
   echo "importing the module without enabling it leaves the system derivation unchanged" > $out
 ''
