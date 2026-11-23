@@ -125,7 +125,9 @@ in
         Restart = "on-failure";
         RestartSec = 10;
         TimeoutStopSec = 90;
-        # Only the supervisor is killed. Orca's terminal daemon and its agents survive a restart.
+        # The main process is the bubblewrap wrapper, which does not forward signals. Its child is
+        # Orca's supervisor, which stops the server on SIGTERM and leaves the terminal daemon alone.
+        ExecStop = "${pkgs.procps}/bin/pkill -TERM -P $MAINPID";
         KillMode = "process";
       };
     };

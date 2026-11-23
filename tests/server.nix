@@ -99,26 +99,30 @@ in
         assert pinned.succeed(f"iptables -S | grep -- '--dport {PORT}'").strip() == FIREWALL_RULE
         client.succeed(f"timeout 5 bash -c '</dev/tcp/{pinned_address}/{PORT}'")
 
-    with subtest("pinned: the runtime comes back after it is killed"):
-        runtime_pid = pinned.succeed(f"ss -ltnpH 'sport = :{PORT}' | grep -o 'pid=[0-9]*' | cut -d= -f2").strip()
-        pinned.succeed(f"kill -KILL {runtime_pid}")
-        pinned.wait_until_fails(f"kill -0 {runtime_pid}")
-        wait_for_listener(pinned, f"{pinned_address}:{PORT}")
-        show(pinned, as_alice("journalctl --user -u orca-server --no-pager | tail -n 25"))
+    def runtime_pid(machine):
+        return machine.succeed(f"ss -ltnpH 'sport = :{PORT}' | grep -o 'pid=[0-9]*' | cut -d= -f2").strip()
 
-    with subtest("pinned: systemd restarts the unit after its main process is killed"):
-        main_pid = unit_property(pinned, "MainPID")
-        pinned.succeed(f"kill -KILL {main_pid}")
-        show(pinned, "sleep 45")
+    with subtest("pinned: Orca's supervisor restarts the runtime after it is killed"):
+        first_pid = runtime_pid(pinned)
+        pinned.succeed(f"kill -KILL {first_pid}")
+        pinned.wait_until_fails(f"kill -0 {first_pid}")
+        wait_for_listener(pinned, f"{pinned_address}:{PORT}")
+        second_pid = runtime_pid(pinned)
+        assert second_pid != first_pid
+        assert unit_property(pinned, "NRestarts") == "0"
+
+    with subtest("pinned: systemd restarts the unit after every process in it is killed"):
+        pinned.succeed(as_alice("systemctl --user kill --signal=KILL orca-server"))
+        pinned.wait_until_fails(f"kill -0 {second_pid}")
+        pinned.wait_until_succeeds(as_alice("systemctl --user show orca-server --property NRestarts --value") + " | grep -qx 1")
+        wait_for_listener(pinned, f"{pinned_address}:{PORT}")
+        assert runtime_pid(pinned) != second_pid
         show(pinned, as_alice("systemctl --user status orca-server --no-pager"))
-        print("NRestarts:", unit_property(pinned, "NRestarts"), "MainPID:", main_pid, "->", unit_property(pinned, "MainPID"))
-        show(pinned, as_alice("journalctl --user -u orca-server --no-pager | tail -n 30"))
-        listeners(pinned)
 
     with subtest("pinned: a foreground run prints a pairing link, and the grant survives the service restart"):
         assert "orca://pair" not in pinned.succeed(as_alice("journalctl --user -u orca-server --no-pager"))
         pinned.succeed(as_alice("systemctl --user stop orca-server"))
-        show(pinned, "ss -ltnp")
+        pinned.wait_until_fails(f"ss -ltnH | grep -qF ':{PORT} '")
         pinned.succeed(as_alice(f"orca-server serve --refuse-public --port {PORT} --bind {pinned_address} --pairing-address {pinned_address} >/tmp/foreground.log 2>&1 &"))
         pinned.wait_until_succeeds("grep -q 'orca://pair' /tmp/foreground.log", timeout=datetime.timedelta(minutes=3))
         pair_client("pinned", pairing_link(pinned.succeed("cat /tmp/foreground.log")))
