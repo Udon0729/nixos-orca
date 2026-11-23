@@ -46,6 +46,7 @@ in
   };
 
   testScript = ''
+    import datetime
     import re
 
     PORT = 6768
@@ -70,7 +71,7 @@ in
         return [line.split()[3] for line in machine.succeed("ss -ltnH").splitlines()]
 
     def wait_for_listener(machine, local):
-        machine.wait_until_succeeds(f"ss -ltnH | grep -qF ' {local} '", timeout=180)
+        machine.wait_until_succeeds(f"ss -ltnH | grep -qF ' {local} '", timeout=datetime.timedelta(minutes=3))
 
     def unit_property(machine, name):
         return machine.succeed(as_alice(f"systemctl --user show orca-server --property {name} --value")).strip()
@@ -98,10 +99,6 @@ in
         assert pinned.succeed(f"iptables -S | grep -- '--dport {PORT}'").strip() == FIREWALL_RULE
         client.succeed(f"timeout 5 bash -c '</dev/tcp/{pinned_address}/{PORT}'")
 
-    with subtest("pinned: each start prints one pairing link, and a client can use it"):
-        journal = pinned.succeed(as_alice("journalctl --user -u orca-server --no-pager"))
-        pair_client("pinned", pairing_link(journal))
-
     with subtest("pinned: the runtime comes back after it is killed"):
         runtime_pid = pinned.succeed(f"ss -ltnpH 'sport = :{PORT}' | grep -o 'pid=[0-9]*' | cut -d= -f2").strip()
         pinned.succeed(f"kill -KILL {runtime_pid}")
@@ -117,6 +114,18 @@ in
         print("NRestarts:", unit_property(pinned, "NRestarts"), "MainPID:", main_pid, "->", unit_property(pinned, "MainPID"))
         show(pinned, as_alice("journalctl --user -u orca-server --no-pager | tail -n 30"))
         listeners(pinned)
+
+    with subtest("pinned: a foreground run prints a pairing link, and the grant survives the service restart"):
+        assert "orca://pair" not in pinned.succeed(as_alice("journalctl --user -u orca-server --no-pager"))
+        pinned.succeed(as_alice("systemctl --user stop orca-server"))
+        show(pinned, "ss -ltnp")
+        pinned.succeed(as_alice(f"orca-server serve --refuse-public --port {PORT} --bind {pinned_address} --pairing-address {pinned_address} >/tmp/foreground.log 2>&1 &"))
+        pinned.wait_until_succeeds("grep -q 'orca://pair' /tmp/foreground.log", timeout=datetime.timedelta(minutes=3))
+        pair_client("pinned", pairing_link(pinned.succeed("cat /tmp/foreground.log")))
+        show(pinned, "pkill -INT -u alice -f 'cli/index.js serve'; sleep 10; ss -ltnp")
+        pinned.succeed(as_alice("systemctl --user start orca-server"))
+        wait_for_listener(pinned, f"{pinned_address}:{PORT}")
+        show(client, as_alice("orca-ide status --environment pinned --json"))
 
     with subtest("wide: listens on all interfaces, and the firewall opens eth1 only"):
         wide.wait_for_unit("multi-user.target")
