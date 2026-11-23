@@ -56,14 +56,20 @@
         pinned.succeed("sleep 60")
         show_state(pinned)
 
-    with subtest("the server is back after a reboot"):
+    with subtest("after a reboot the server stays down, by Orca's own crash limit"):
         pinned.shutdown()
         pinned.start()
         pinned.wait_for_unit("multi-user.target")
-        try:
-            # EXPECTED TO FAIL HERE: the unit starts, prints "[serve] Not starting: ..." and exits 0.
-            wait_for_listener(pinned, local)
-        finally:
-            show_state(pinned)
+        pinned.wait_until_succeeds(as_alice("journalctl --user -u orca-server --no-pager") + " | grep -qF 'Not starting'")
+        pinned.succeed("sleep 30")
+        show_state(pinned)
+        pinned.fail(f"ss -ltnH | grep -qF ' {local} '")
+
+    with subtest("removing the crash record and restarting the unit brings it back"):
+        pinned.succeed(as_alice("systemctl --user stop orca-server"))
+        pinned.succeed("rm /home/alice/.local/state/orca-server/serve-supervisor-brake.json")
+        pinned.succeed(as_alice("systemctl --user reset-failed orca-server; systemctl --user start orca-server"))
+        wait_for_listener(pinned, local)
+        show_state(pinned)
   '';
 }

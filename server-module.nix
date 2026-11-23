@@ -14,11 +14,20 @@ let
   listenFlags =
     if cfg.mobilePairing then ''--bind 0.0.0.0 --no-pairing'' else ''--bind "$address"'';
 
+  ip = "${pkgs.iproute2}/bin/ip";
+
   start = pkgs.writeShellScript "orca-server-start" ''
     set -eu
     address=${lib.escapeShellArg (if cfg.bindAddress == null then "" else cfg.bindAddress)}
+    # Orca does not retry a bind that fails, so start only when the address exists.
+    if [ -n "$address" ]; then
+      until ${ip} -4 -o address show | ${pkgs.gnugrep}/bin/grep -qF " $address/"; do
+        echo "waiting for the address $address"
+        sleep 5
+      done
+    fi
     while [ -z "$address" ]; do
-      address="$(${pkgs.iproute2}/bin/ip -4 -o address show dev ${lib.escapeShellArg cfg.interface} scope global 2>/dev/null \
+      address="$(${ip} -4 -o address show dev ${lib.escapeShellArg cfg.interface} scope global 2>/dev/null \
         | ${pkgs.gawk}/bin/awk '{ sub(/\/.*/, "", $4); print $4; exit }')"
       if [ -z "$address" ]; then
         echo "waiting for an IPv4 address on ${cfg.interface}"
@@ -28,6 +37,17 @@ let
     ${pkgs.coreutils}/bin/install -d -m 700 ${lib.escapeShellArg dataDir}
     exec ${lib.getExe cfg.package} serve --supervise --refuse-public \
       --port ${toString cfg.port} ${listenFlags} --pairing-address "$address"
+  '';
+
+  # The main process is the bubblewrap wrapper, which does not forward signals. Its child is
+  # Orca's supervisor, which stops the server on SIGTERM and leaves the terminal daemon alone.
+  # Waiting for it makes `systemctl stop` return only after the port is free.
+  stop = pkgs.writeShellScript "orca-server-stop" ''
+    [ -n "''${1:-}" ] || exit 0
+    supervisor="$(${pkgs.procps}/bin/pgrep -P "$1" || true)"
+    [ -n "$supervisor" ] || exit 0
+    kill -TERM $supervisor
+    ${pkgs.coreutils}/bin/tail --pid="$supervisor" -f /dev/null
   '';
 in
 {
@@ -145,9 +165,7 @@ in
         Restart = "on-failure";
         RestartSec = 10;
         TimeoutStopSec = 90;
-        # The main process is the bubblewrap wrapper, which does not forward signals. Its child is
-        # Orca's supervisor, which stops the server on SIGTERM and leaves the terminal daemon alone.
-        ExecStop = "${pkgs.procps}/bin/pkill -TERM -P $MAINPID";
+        ExecStop = "${stop} $MAINPID";
         KillMode = "process";
       };
     };

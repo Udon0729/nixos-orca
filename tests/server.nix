@@ -36,6 +36,17 @@ in
     };
   };
 
+  # The bind address does not exist at boot, like a Tailscale address before `tailscale up`.
+  nodes.late = {
+    imports = [ common ];
+    services.orca-server = {
+      enable = true;
+      user = "alice";
+      interface = "eth1";
+      bindAddress = "192.168.1.50";
+    };
+  };
+
   nodes.client = {
     imports = [ common ];
     virtualisation.vlans = [
@@ -126,8 +137,8 @@ in
         assert runtime_pid(pinned) != second_pid
 
     with subtest("pinned: a foreground run prints a pairing link, and the grant survives the service restart"):
-        pinned.succeed(as_alice("systemctl --user stop orca-server"))
-        pinned.wait_until_fails(f"ss -ltnH | grep -qF ':{PORT} '")
+        after_stop = pinned.succeed(as_alice("systemctl --user stop orca-server") + f" && ss -ltnH 'sport = :{PORT}'")
+        assert after_stop.strip() == "", "still listening when stop returned: " + after_stop
         pinned.succeed(as_alice(f"orca-server serve --refuse-public --port {PORT} --bind {pinned_address} --pairing-address {pinned_address} >/tmp/foreground.log 2>&1 &"))
         pinned.wait_until_succeeds("grep -q 'orca://pair' /tmp/foreground.log", timeout=datetime.timedelta(minutes=3))
         pair_client("pinned", pairing_link(pinned.succeed("cat /tmp/foreground.log")))
@@ -136,6 +147,13 @@ in
         pinned.succeed(as_alice("systemctl --user start orca-server"))
         wait_for_listener(pinned, f"{pinned_address}:{PORT}")
         assert runtime_of("pinned")["state"] == "ready"
+
+    with subtest("late: the server waits for its bind address and starts once it exists"):
+        late.wait_for_unit("multi-user.target")
+        late.wait_until_succeeds(as_alice("journalctl --user -u orca-server --no-pager") + " | grep -qF 'waiting for the address 192.168.1.50'")
+        late.fail(f"ss -ltnH | grep -qF ':{PORT} '")
+        late.succeed("ip address add 192.168.1.50/24 dev eth1")
+        wait_for_listener(late, f"192.168.1.50:{PORT}")
 
     with subtest("wide: listens on all interfaces, and the firewall opens eth1 only"):
         wide.wait_for_unit("multi-user.target")
