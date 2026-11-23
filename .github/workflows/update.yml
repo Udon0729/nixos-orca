@@ -1,0 +1,37 @@
+name: update
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Point sources.json at the latest stablyai/orca release
+        id: pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/update-pin.sh
+
+      - if: steps.pin.outputs.changed == 'true'
+        uses: ./.github/actions/check
+
+      - name: Land the new pin
+        if: steps.pin.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "orca-ide: ${{ steps.pin.outputs.old }} -> ${{ steps.pin.outputs.new }}" -- sources.json
+          git push origin "HEAD:${{ github.ref_name }}"

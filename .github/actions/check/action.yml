@@ -1,0 +1,36 @@
+name: check
+description: Build the Orca package, run the NixOS VM test, evaluate the example host, and keep the VM screenshot.
+
+runs:
+  using: composite
+  steps:
+    - uses: cachix/install-nix-action@v32
+
+    - name: Runner capabilities
+      shell: bash
+      run: |
+        nproc
+        free -h
+        ls -l /dev/kvm
+        nix config show system-features
+
+    - name: nix flake check
+      shell: bash
+      run: nix flake check -L
+
+    - name: Evaluate examples/host with the stub hardware configuration
+      shell: bash
+      run: ./scripts/eval-example-host.sh
+
+    - name: Collect the VM screenshot
+      shell: bash
+      run: |
+        nix build .#checks.x86_64-linux.vm --out-link vm-result
+        ls -l vm-result/
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: orca-window-screenshot
+        path: vm-result/*.png
+        if-no-files-found: error
+        retention-days: 14
