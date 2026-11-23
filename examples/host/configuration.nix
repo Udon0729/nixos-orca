@@ -2,6 +2,13 @@
 {
   programs.orca.enable = true;
 
+  # The always-on Orca runtime that the phone and other computers pair with.
+  services.orca-server = {
+    enable = true;
+    user = "owner";
+    mobilePairing = true;
+  };
+
   boot = {
     kernelPackages = pkgs.linuxPackages_latest;
     kernelParams = [ "amd_pstate=active" ];
@@ -20,6 +27,7 @@
 
   services = {
     fwupd.enable = true;
+    tailscale.enable = true;
     power-profiles-daemon.enable = true;
     displayManager.gdm.enable = true;
     desktopManager.gnome.enable = true;

@@ -12,11 +12,16 @@
     {
       packages.${system}.default = pkgs.callPackage ./package.nix { };
 
-      nixosModules.default = ./module.nix;
+      nixosModules.default.imports = [
+        ./module.nix
+        ./server-module.nix
+      ];
 
       checks.${system} = {
         package = self.packages.${system}.default;
         vm = pkgs.testers.runNixOSTest (import ./tests/vm.nix { inherit self nixpkgs; });
+        server = pkgs.testers.runNixOSTest (import ./tests/server.nix { inherit self; });
+        existing-config = import ./tests/existing-config.nix { inherit self nixpkgs pkgs; };
       };
     };
 }
