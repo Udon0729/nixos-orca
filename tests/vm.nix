@@ -27,6 +27,8 @@
     };
 
   testScript = ''
+    import json
+
     def as_alice(command):
         return f"su - alice -c 'DISPLAY=:0 {command}'"
 
@@ -42,8 +44,10 @@
     print(machine.succeed(as_alice("xwininfo -root -tree")))
     machine.screenshot("orca-window")
 
-    print(machine.execute(as_alice("orca-ide status --json 2>&1"))[1])
-    print(machine.execute(as_alice("orca status --json 2>&1"))[1])
-    print(machine.execute("tail -n 60 /tmp/orca-ide-desktop.log")[1])
+    for cli in ["orca-ide", "orca"]:
+        status = json.loads(machine.succeed(as_alice(f"{cli} status --json")))
+        runtime = status["result"]["runtime"]
+        assert runtime["state"] == "ready", runtime
+        assert runtime["appVersion"] == "${self.packages.x86_64-linux.default.version}", runtime
   '';
 }
