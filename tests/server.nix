@@ -47,6 +47,7 @@ in
 
   testScript = ''
     import datetime
+    import json
     import re
 
     PORT = 6768
@@ -57,11 +58,6 @@ in
 
     def redact(text):
         return re.sub(r"(orca://pair\?)\S+", r"\1<redacted>", text)
-
-    def show(machine, command):
-        status, output = machine.execute(command + " 2>&1")
-        print(f"$ {command}\n[exit {status}]\n{redact(output)}")
-        return output
 
     def address_of(machine, interface):
         return machine.succeed(f"ip -4 -o address show dev {interface} | awk '{{ sub(/\\/.*/, \"\", $4); print $4 }}'").strip()
@@ -82,11 +78,21 @@ in
         print("pairing link: " + redact(match.group(0)))
         return match.group(0)
 
+    def runtime_of(environment):
+        status = json.loads(client.succeed(as_alice(f"orca-ide status --environment {environment} --json")))
+        return status["result"]["runtime"]
+
     def pair_client(name, link):
-        client.succeed(f"cat > /tmp/{name}.link <<'EOF'\n{link}\nEOF")
-        show(client, as_alice(f"orca-ide environment add --name {name} --pairing-code \"$(cat /tmp/{name}.link)\""))
-        show(client, as_alice("orca-ide environment list"))
-        show(client, as_alice(f"orca-ide status --environment {name} --json"))
+        # execute() keeps the link out of the test log. succeed() would print the command.
+        status, _ = client.execute(f"cat > /tmp/{name}.link <<'EOF'\n{link}\nEOF")
+        assert status == 0
+        client.succeed(as_alice(f"orca-ide environment add --name {name} --pairing-code \"$(cat /tmp/{name}.link)\""))
+        runtime = runtime_of(name)
+        assert runtime["state"] == "ready" and runtime["reachable"], runtime
+
+    def assert_private_state(machine):
+        assert machine.succeed("stat -c '%U %a' /home/alice/.local/state/orca-server").strip() == "alice 700"
+        assert "orca://pair" not in machine.succeed(as_alice("journalctl --user -u orca-server --no-pager"))
 
     start_all()
 
@@ -98,6 +104,7 @@ in
             assert local == f"{pinned_address}:{PORT}" or local.startswith("127.0.0.1:"), local
         assert pinned.succeed(f"iptables -S | grep -- '--dport {PORT}'").strip() == FIREWALL_RULE
         client.succeed(f"timeout 5 bash -c '</dev/tcp/{pinned_address}/{PORT}'")
+        assert_private_state(pinned)
 
     def runtime_pid(machine):
         return machine.succeed(f"ss -ltnpH 'sport = :{PORT}' | grep -o 'pid=[0-9]*' | cut -d= -f2").strip()
@@ -117,19 +124,18 @@ in
         pinned.wait_until_succeeds(as_alice("systemctl --user show orca-server --property NRestarts --value") + " | grep -qx 1")
         wait_for_listener(pinned, f"{pinned_address}:{PORT}")
         assert runtime_pid(pinned) != second_pid
-        show(pinned, as_alice("systemctl --user status orca-server --no-pager"))
 
     with subtest("pinned: a foreground run prints a pairing link, and the grant survives the service restart"):
-        assert "orca://pair" not in pinned.succeed(as_alice("journalctl --user -u orca-server --no-pager"))
         pinned.succeed(as_alice("systemctl --user stop orca-server"))
         pinned.wait_until_fails(f"ss -ltnH | grep -qF ':{PORT} '")
         pinned.succeed(as_alice(f"orca-server serve --refuse-public --port {PORT} --bind {pinned_address} --pairing-address {pinned_address} >/tmp/foreground.log 2>&1 &"))
         pinned.wait_until_succeeds("grep -q 'orca://pair' /tmp/foreground.log", timeout=datetime.timedelta(minutes=3))
         pair_client("pinned", pairing_link(pinned.succeed("cat /tmp/foreground.log")))
-        show(pinned, "pkill -INT -u alice -f 'cli/index.js serve'; sleep 10; ss -ltnp")
+        pinned.succeed("pkill -INT -u alice -f 'cli/index.js serve'")
+        pinned.wait_until_fails(f"ss -ltnH | grep -qF ':{PORT} '")
         pinned.succeed(as_alice("systemctl --user start orca-server"))
         wait_for_listener(pinned, f"{pinned_address}:{PORT}")
-        show(client, as_alice("orca-ide status --environment pinned --json"))
+        assert runtime_of("pinned")["state"] == "ready"
 
     with subtest("wide: listens on all interfaces, and the firewall opens eth1 only"):
         wide.wait_for_unit("multi-user.target")
@@ -142,10 +148,9 @@ in
         client.fail(f"timeout 5 bash -c '</dev/tcp/{address_of(wide, 'eth2')}/{PORT}'")
 
     with subtest("wide: pairing links are made on demand, for desktop and for mobile"):
-        assert "orca://pair" not in wide.succeed(as_alice("journalctl --user -u orca-server --no-pager"))
-        desktop_link = pairing_link(wide.succeed(as_alice(f"orca-server pair --address {wide_address}")))
-        status, mobile_output = wide.execute(as_alice(f"orca-server pair --mobile --address {wide_address}") + " 2>&1")
-        print("mobile pair exit:", status, "lines:", len(mobile_output.splitlines()), [redact(line) for line in mobile_output.splitlines() if "://" in line])
-        pair_client("wide", desktop_link)
+        pair_client("wide", pairing_link(wide.succeed(as_alice(f"orca-server pair --address {wide_address}"))))
+        pairing_link(wide.succeed(as_alice(f"orca-server pair --mobile --address {wide_address}")))
+        assert_private_state(wide)
+        print(client.succeed(as_alice("orca-ide host list --environment wide --json")))
   '';
 }

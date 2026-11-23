@@ -9,8 +9,8 @@ let
   dataDir = "${config.users.users.${cfg.user}.home}/.local/state/orca-server";
 
   # Orca creates pairing offers on demand (`orca-ide pair`, and every mobile offer) only on a
-  # listener that covers all interfaces. A listener pinned to one address can only print one
-  # offer per start. With mobilePairing the firewall rule is what keeps the port to cfg.interface.
+  # listener that covers all interfaces. With mobilePairing the firewall rule is what keeps the
+  # port to cfg.interface. --no-pairing keeps the start-up offer out of the journal.
   listenFlags =
     if cfg.mobilePairing then ''--bind 0.0.0.0 --no-pairing'' else ''--bind "$address"'';
 
@@ -25,7 +25,7 @@ let
         sleep 5
       fi
     done
-    mkdir -p ${lib.escapeShellArg dataDir}
+    ${pkgs.coreutils}/bin/install -d -m 700 ${lib.escapeShellArg dataDir}
     exec ${lib.getExe cfg.package} serve --supervise --refuse-public \
       --port ${toString cfg.port} ${listenFlags} --pairing-address "$address"
   '';
@@ -80,8 +80,9 @@ in
         Orca serves both only from a listener on all interfaces, so this makes the server listen
         on 0.0.0.0. The firewall still opens the port on `interface` alone.
 
-        When this is off, the server listens on one address. Each start then prints one desktop
-        pairing link to the journal of the user unit and retires the previous unused link.
+        When this is off, the server listens on one address. It then cannot make pairing links
+        while it runs as a service. Stop the unit and run `orca-server serve` once in a terminal
+        to pair a desktop client.
       '';
     };
 

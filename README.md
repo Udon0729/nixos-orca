@@ -9,8 +9,9 @@
 | 出力 | 内容 |
 | --- | --- |
 | `packages.x86_64-linux.default` | Orca 本体。`orca-ide`、`orca-ide-desktop`、デスクトップエントリ、アイコンを含みます。 |
-| `nixosModules.default` | `programs.orca.enable = true;` で上のパッケージをシステムに入れます。 |
+| `nixosModules.default` | `programs.orca.enable = true;` で上のパッケージをシステムに入れます。`services.orca-server` で常時起動のランタイムを動かします。 |
 | `checks.x86_64-linux.vm` | NixOS の VM で X セッションを起動し、Orca のウィンドウが表示されることを確かめるテストです。 |
+| `checks.x86_64-linux.server` | 3 台の VM で `services.orca-server` の起動、待ち受けアドレス、ファイアウォール、再起動、ペアリングを確かめるテストです。 |
 | `examples/host` | ACEMAGIC Matrix Mini M1 向けの NixOS 構成例です。 |
 
 ## コマンド名（`orca` の衝突について）
@@ -45,6 +46,7 @@ services.orca.enable = false;
 - `services.fwupd.enable`
 - `amd_pstate=active` と power-profiles-daemon
 - GNOME、systemd-boot、NetworkManager、日本語ロケール
+- Tailscale と `services.orca-server`（[常時起動の Orca ランタイム](#常時起動の-orca-ランタイム)を参照）
 
 インストールは次の順に進めます。
 
@@ -65,7 +67,7 @@ services.orca.enable = false;
      | sudo tee /mnt/etc/nixos/hardware-configuration.nix
    ```
 
-4. `/mnt/etc/nixos/configuration.nix` のユーザー名 `owner` とホスト名 `matrix-mini` を書き換えます。
+4. `/mnt/etc/nixos/configuration.nix` のユーザー名 `owner`（`users.users` と `services.orca-server.user` の 2 か所）とホスト名 `matrix-mini` を書き換えます。
 5. インストールします。
 
    ```sh
@@ -75,6 +77,137 @@ services.orca.enable = false;
 6. 再起動してログインし、アプリ一覧から「Orca」を起動します。
 
 `system.stateVersion` は、インストールした時点の値のまま変えません。
+
+## 常時起動の Orca ランタイム
+
+`services.orca-server` は、この NixOS マシンを Orca の入口にします。スマートフォンや Mac の Orca はこのマシンのランタイムに接続します。プロジェクト、ターミナル、エージェントはこのマシン上で動き続けるので、Mac がスリープしても止まりません。
+
+### 仕組み
+
+- `orca-ide serve --supervise` を、指定したユーザーの systemd ユーザーユニット `orca-server.service` として動かします。root では動きません。
+- そのユーザーに lingering を設定します。ログインしなくても、起動時にユニットが立ち上がります。
+- 状態は `~/.local/state/orca-server`（モード 700）に置きます。デスクトップアプリのプロファイル（`~/.config`）とは別です。
+- ファイアウォールは、ポートを `interface`（既定は `tailscale0`）だけに開けます。ほかのインターフェースには開けません。
+- Orca 自身も、localhost、LAN、Tailscale 以外の送信元を拒否します（`--refuse-public`）。
+
+| オプション | 既定値 | 内容 |
+| --- | --- | --- |
+| `enable` | `false` | サービスを有効にします。 |
+| `user` | なし（必須） | ランタイムを動かす一般ユーザーです。 |
+| `interface` | `"tailscale0"` | ファイアウォールでポートを開ける唯一のインターフェースです。`bindAddress` がなければ、このインターフェースの IPv4 アドレスを待って使います。 |
+| `bindAddress` | `null` | 待ち受けとペアリングリンクに使う IP アドレスを直接指定します。 |
+| `port` | `6768` | TCP ポートです。 |
+| `mobilePairing` | `false` | スマートフォンのペアリングと、`orca-server pair` によるペアリングを有効にします。 |
+| `openFirewall` | `true` | `interface` にだけポートを開けます。 |
+
+`mobilePairing` で待ち受け方が変わります。これは Orca の仕様です。
+
+| `mobilePairing` | 待ち受けアドレス | ペアリングの方法 |
+| --- | --- | --- |
+| `false` | `interface` のアドレスだけ | サービスを止めて、ターミナルで `orca-server serve` を 1 回動かします（下記）。スマートフォンはペアリングできません。 |
+| `true` | `0.0.0.0`（全インターフェース） | `orca-server pair` でいつでもリンクを作れます。到達できる範囲は、ファイアウォールが `interface` に限ります。 |
+
+`examples/host` はスマートフォンを使う前提で、`mobilePairing = true` にしています。
+
+`orca-server` コマンドは、サービスのプロファイルを対象にした `orca-ide` です。サービスを動かすユーザーで実行します。
+
+### Tailscale の初回設定
+
+`examples/host` は `services.tailscale.enable = true;` を含みます。認証キーはリポジトリに入れません。初回だけ、マシン上で次を実行してブラウザで認証します。
+
+```sh
+sudo tailscale up
+tailscale ip -4
+```
+
+`orca-server.service` は、`tailscale0` に IPv4 アドレスが付くまで待ってから起動します。確認には次を使います。
+
+```sh
+systemctl --user status orca-server
+orca-server status --json
+```
+
+認証キーで自動化したい場合は、キーをリポジトリの外のファイルに置き、`services.tailscale.authKeyFile = "/path/to/key";` を指定します。
+
+### スマートフォンと Mac をペアリングする
+
+ペアリングリンクは、このランタイムへのアクセス権です。パスワードと同じように扱ってください。
+
+スマートフォン（Tailscale に接続した状態）では、マシン上で QR コードを表示し、Orca Mobile の **Pair** で読み取ります。
+
+```sh
+orca-server pair --mobile --address "$(tailscale ip -4)"
+```
+
+Mac では、マシン上でリンクを作ります。
+
+```sh
+orca-server pair --address "$(tailscale ip -4)"
+```
+
+Mac の Orca で **Settings → Remote Orca Servers → Add Server** を開き、リンクを貼ります。CLI でも追加できます。
+
+```sh
+orca environment add --name nixos --pairing-code 'orca://pair?...'
+orca status --environment nixos --json
+```
+
+`mobilePairing = false` のまま Mac だけをペアリングする場合は、サービスを止めてから 1 回だけ手動で起動します。表示されたリンクを Mac に登録したら、Ctrl-C で止めてサービスに戻します。登録は再起動後も残ります。
+
+```sh
+systemctl --user stop orca-server
+orca-server serve --refuse-public --port 6768 --bind "$(tailscale ip -4)" --pairing-address "$(tailscale ip -4)"
+systemctl --user start orca-server
+```
+
+エージェントの認証情報は、サーバー側に必要です。マシン上で登録します。
+
+```sh
+orca-server account add --agent claude
+orca-server account list
+```
+
+### Orca を更新したあと
+
+`nixos-rebuild switch` は、ユーザーユニットを再起動しません。新しい Orca でランタイムを動かすには、次を実行するか、マシンを再起動します。
+
+```sh
+systemctl --user restart orca-server
+```
+
+Orca は、再起動してもターミナルが残ると起動ログに出します（`terminals survive an orcad restart: yes`）。エージェントが動いている状態での再起動は、このリポジトリのテストでは確かめていません。
+
+### 計算サーバーを使う
+
+計算サーバーで動いている既存の Orca ランタイムは、止めたり再起動したりしないでください。`orca environment stop`、`update`、`rollback` は、計算サーバーに対して実行しません。下の手順は、どちらも既存のランタイムに触れません。
+
+Mac やスマートフォンから、NixOS マシン経由で計算サーバーの作業に届くかどうかは、まだ実機で確かめていません。考えられる構成は 2 つあります。どちらが動くかは未確認です。
+
+**構成 A: 計算サーバーを NixOS 側の SSH ターゲットにする。** NixOS のランタイムが SSH で計算サーバーに入り、ワークスペースを開きます。計算サーバー側の Orca ランタイムは使いません。
+
+1. サービスのユーザーの `~/.ssh/config` に計算サーバーを書き、鍵でログインできるようにします。公式ドキュメントによると、Orca は `~/.ssh/config` の Host を SSH ターゲットとして取り込みます。
+2. NixOS マシンで `orca-server host list --json` を実行します。計算サーバーが `ssh:<target-id>` として出ることを確かめます。
+3. Mac で `orca host list --environment nixos --json` を実行します。同じ SSH ターゲットが見えるかを確かめます。
+4. スマートフォンの Orca Mobile で、NixOS のランタイムの下にそのワークスペースが出るかを確かめます。
+
+**構成 B: 環境を連鎖させる（Mac → NixOS → 計算サーバーのランタイム）。** NixOS のランタイムに、計算サーバーの Orca ランタイムをペアリングします。
+
+1. 計算サーバーで、動いているランタイムにリンクを作らせます。再起動は不要です。計算サーバーのランタイムが 1 つのアドレスに固定されている場合、このコマンドは失敗します。そのときは構成 A を使います。
+
+   ```sh
+   orca-ide pair --address <NixOS マシンから届くアドレス>
+   ```
+
+2. NixOS マシンで登録します。
+
+   ```sh
+   orca-server environment add --name compute --pairing-code 'orca://pair?...'
+   orca-server status --environment compute --json
+   ```
+
+3. Mac で `orca host list --environment nixos --json` を実行します。`compute` が出るか、Mac からそのプロジェクトを開けるかを確かめます。
+
+手順 3 で計算サーバーが見えなければ、連鎖は使えません。その場合、Mac とスマートフォンから計算サーバーへは、構成 A か、これまでどおりの直接のペアリングで届きます。
 
 ## 更新の流れ
 
@@ -145,6 +278,7 @@ sudo nixos-rebuild switch --flake .#matrix-mini
 - Orca は bubblewrap の FHS 環境の中で動きます。Orca のターミナルから起動したプロセスも、その中で動きます。この環境では `sudo` のような setuid コマンドは動きません（`buildFHSEnv` の仕様からの推定で、未検証です）。
 - アプリ内の「Orca CLI を登録」は使いません。`~/.local/bin/orca-ide` に Nix ストアへのリンクを作りますが、FHS 環境の外では動きません。CLI は最初から `orca-ide` として入っています。
 - アプリ内の更新確認は、新しいバージョンがあることを知らせるだけです。適用はこの flake の更新で行います。
+- `services.orca-server` とデスクトップアプリは別のプロファイルを使います。同じプロジェクトをデスクトップアプリで見るには、アプリからこのマシンのランタイムにペアリングします。
 
 ## ライセンスと参考
 
